@@ -1,0 +1,63 @@
+name: Daily PM Trend Digest
+ 
+# Runs automatically every day at 8:00am Pacific (15:00 UTC during PDT,
+# 16:00 UTC during PST — GitHub Actions cron is always UTC, so adjust if
+# daylight saving matters to you, or just leave it ~1hr off).
+on:
+  schedule:
+    - cron: "0 15 * * *"
+  workflow_dispatch: {}   # lets you also trigger it manually from the Actions tab
+ 
+permissions:
+  contents: write   # needed so the workflow can commit the digest back to the repo
+ 
+jobs:
+  build-digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+ 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+ 
+      - name: Install dependencies
+        run: pip install feedparser python-dateutil
+ 
+      - name: Run digest script
+        run: python pm_trend_digest.py --days 1 --out digests/latest.html
+ 
+      - name: Also save a dated copy
+        run: cp digests/latest.html "digests/$(date +'%Y-%m-%d').html"
+ 
+      - name: Commit and push digest
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add digests/
+          git diff --quiet --cached || git commit -m "Daily PM trend digest $(date +'%Y-%m-%d')"
+          git push
+ 
+# ---------------------------------------------------------------------------
+# SETUP STEPS (one-time):
+# 1. Create a new GitHub repo (private is fine), e.g. "pm-trend-digest"
+# 2. Add pm_trend_digest.py to the repo root
+# 3. Add this file at: .github/workflows/daily-digest.yml
+# 4. Create an empty "digests" folder (add a placeholder file like
+#    digests/.gitkeep so git tracks the folder)
+# 5. Push to GitHub — that's it, no server, no laptop needed.
+#
+# TO VIEW THE RESULT NICELY:
+# Turn on GitHub Pages (Settings → Pages → Deploy from branch → main → /digests)
+# Then digests/latest.html is viewable at a public URL like:
+#   https://<your-username>.github.io/pm-trend-digest/latest.html
+# (Use a private repo + Pages access restriction, or keep repo public if
+# there's nothing sensitive in the digest — it's just public RSS content.)
+#
+# TO GET IT TO YOUR INBOX INSTEAD/ALSO:
+# Add a step using an action like dawidd6/action-send-mail with repo
+# secrets for SMTP, attaching digests/latest.html. Ask me and I'll add
+# that step for you once you've got the basic flow running.
+# ---------------------------------------------------------------------------
