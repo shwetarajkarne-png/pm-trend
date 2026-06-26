@@ -29,17 +29,19 @@ jobs:
       - name: Run digest script
         run: python pm_trend_digest.py --days 1 --out digests/latest.html
  
-      - name: Also save a dated copy
+      name: Also save a dated copy
         run: cp digests/latest.html "digests/$(date +'%Y-%m-%d').html"
- 
+
+      - name: Copy to root for GitHub Pages
+        run: cp digests/latest.html index.html
+
       - name: Commit and push digest
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add digests/
+          git add digests/ index.html
           git diff --quiet --cached || git commit -m "Daily PM trend digest $(date +'%Y-%m-%d')"
           git push
- 
 # ---------------------------------------------------------------------------
 # SETUP STEPS (one-time):
 # 1. Create a new GitHub repo (private is fine), e.g. "pm-trend-digest"
