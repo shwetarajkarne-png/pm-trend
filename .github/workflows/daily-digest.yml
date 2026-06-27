@@ -29,7 +29,7 @@ jobs:
       - name: Run digest script
         run: python pm_trend_digest.py --days 1 --out digests/latest.html
  
-      name: Also save a dated copy
+      - name: Also save a dated copy
         run: cp digests/latest.html "digests/$(date +'%Y-%m-%d').html"
 
       - name: Copy to root for GitHub Pages
