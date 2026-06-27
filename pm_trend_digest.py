@@ -1,38 +1,35 @@
 #!/usr/bin/env python3
 """
-PM Trend Digest v2 — HTML visual + Top 3 synthesis
------------------------------------------------------
-Pulls recent posts from curated Substack + Medium RSS feeds (PM, AI/agentic,
-support CX), then:
-  1. Renders a styled HTML digest (dark/indigo, matches @thestackedpm look)
-  2. Surfaces a "Top 3" section: ranked by cross-source recurrence + recency
-     - Top 3 for PM SKILL-BUILDING (what to go learn/practice)
-     - Top 3 for CONTENT (what to post about), weighted toward
-       build-in-public angles: show the artifact, the eval, the prompt,
-       the before/after — not just commentary on someone else's trend post.
- 
-Why RSS, not scraping:
-Substack: <pub>.substack.com/feed
-Medium tag: medium.com/feed/tag/<slug>
-Both public, no paywall bypass, no bot-detection cat-and-mouse.
- 
+PM Trend Digest v3
+-------------------
+Pulls recent posts from curated Substack + Medium RSS feeds across four
+focus areas: Product Management, Customer Success, Support, AI/Agentic AI.
+
+Key changes from v2:
+  - Added a dedicated Customer Success category
+  - Skills panel now uses a CURATED VOCABULARY of real PM/AI/CS/Support
+    skill concepts, matched against article text — instead of raw word-
+    frequency counting. This fixes the "Reading / Medium / Continue"
+    garbage-output problem: only real, named skills can appear.
+  - Top 10 articles only, ranked by relevance (vocabulary-term hits +
+    cross-source signal), not just recency.
+  - "Post about this" panel removed — skills-only focus.
+  - Explicit source list and explicit date range shown in the header.
+  - Larger, sans-serif-only typography (no DM Mono).
+
 Setup:
     pip install feedparser python-dateutil --break-system-packages
-    python pm_trend_digest.py
-    python pm_trend_digest.py --days 1 --out digest.html
- 
-Scheduling: see github_workflow.yml in the same folder for a daily
-GitHub Actions cron — no machine of yours needs to stay on.
+    python pm_trend_digest.py --days 2 --out digests/latest.html
 """
- 
+
 import argparse
 import datetime as dt
 import re
 from collections import Counter
- 
+
 from dateutil import parser as dateparser
 from dateutil.tz import tzutc
- 
+
 try:
     import feedparser
 except ImportError:
@@ -40,49 +37,64 @@ except ImportError:
         "Missing dependency. Run:\n"
         "  pip install feedparser python-dateutil --break-system-packages"
     )
- 
+
 # ---------------------------------------------------------------------------
-# Feeds — add/remove freely.
+# Feeds — 4 focus areas. Add/remove freely.
 # ---------------------------------------------------------------------------
 FEEDS = {
-    "PM / AI-PM": [
+    "Product Management": [
         ("Lenny's Newsletter", "https://www.lennysnewsletter.com/feed"),
         ("One Knight in Product", "https://www.oneknightinproduct.com/feed"),
         ("Product Growth (Aakash Gupta)", "https://www.aakashg.com/feed"),
         ("Medium: product-management", "https://medium.com/feed/tag/product-management"),
         ("Medium: ai-product-management", "https://medium.com/feed/tag/ai-product-management"),
     ],
-    "AI / Agentic": [
+    "AI / Agentic AI": [
         ("The Batch (DeepLearning.AI)", "https://www.deeplearning.ai/the-batch/feed/"),
         ("Ben's Bites", "https://www.bensbites.com/feed"),
         ("Medium: artificial-intelligence", "https://medium.com/feed/tag/artificial-intelligence"),
         ("Medium: ai-agents", "https://medium.com/feed/tag/ai-agents"),
     ],
-    "Support / CX AI": [
+    "Customer Success": [
+        ("Medium: customer-success", "https://medium.com/feed/tag/customer-success"),
+    ],
+    "Support": [
         ("Medium: customer-experience", "https://medium.com/feed/tag/customer-experience"),
         ("Medium: customer-support", "https://medium.com/feed/tag/customer-support"),
     ],
 }
- 
-STOPWORDS = set(
-    """a an the of to for in on with and or is are be how why what your you
-    our we this that it its from as at by into about how-to new best top
-    2025 2026 product management ai agent agents customer service support
-    pm guide guides way ways can will just not but more most than these those
-    do does did how's it's don't i'm using use uses used vs part one two""".split()
-)
- 
-SKILL_SIGNALS = {
-    "eval", "evals", "evaluation", "governance", "accuracy", "resolution",
-    "metrics", "framework", "orchestration", "compliance", "architecture",
-    "prioritization", "roadmap", "strategy", "discovery",
+
+# ---------------------------------------------------------------------------
+# Curated skill vocabulary. Each canonical skill maps to phrase variants to
+# match (case-insensitive). This replaces free-text word frequency counting
+# so the skills panel can ONLY ever show real, named PM/AI/CS/Support
+# concepts — never leftover nouns like "Reading" or "Continue".
+# Add/edit freely as your own skill priorities shift.
+# ---------------------------------------------------------------------------
+SKILL_VOCAB = {
+    "Eval design": ["eval", "evals", "evaluation", "benchmark", "accuracy testing"],
+    "Agent orchestration": ["orchestration", "multi-agent", "orchestrate", "agent workflow"],
+    "Governance & compliance": ["governance", "compliance", "soc 2", "iso 42001", "gdpr", "hipaa", "audit"],
+    "Resolution & escalation metrics": ["resolution rate", "automation rate", "escalation", "ticket deflection"],
+    "Prioritization frameworks": ["prioritization", "roadmap", "backlog", "rice score"],
+    "Agent handoff design": ["handoff", "escalation path", "human handoff"],
+    "Agentic system architecture": ["architecture", "agentic architecture", "system design", "agent infrastructure"],
+    "Customer discovery & research": ["discovery", "user research", "customer interview", "voice of customer"],
+    "Pricing & packaging": ["pricing", "packaging", "usage-based pricing", "tiered pricing"],
+    "Stakeholder alignment": ["stakeholder", "cross-functional alignment", "buy-in"],
+    "Platform strategy": ["platform strategy", "platform pm", "platform thinking"],
+    "Build vs. buy decisions": ["build vs buy", "vendor evaluation", "vendor selection"],
+    "Change management & adoption": ["change management", "adoption", "rollout strategy"],
+    "Retention & expansion (NRR/GRR)": ["retention", "expansion revenue", "net revenue retention", "nrr", "grr", "churn"],
+    "Onboarding design": ["onboarding", "activation", "time to value"],
+    "QBR & customer reporting": ["qbr", "quarterly business review", "customer health score"],
+    "Support automation strategy": ["support automation", "deflection", "self-service support"],
+    "Conversational AI design": ["conversational ai", "chatbot design", "voice agent"],
+    "Prompt engineering": ["prompt engineering", "prompt design", "system prompt"],
+    "AI safety & guardrails": ["guardrail", "ai safety", "hallucination", "model risk"],
 }
-CONTENT_SIGNALS = {
-    "agent", "agentic", "build", "shipped", "prototype", "workflow",
-    "automation", "case", "playbook", "launch", "demo", "pipeline",
-}
- 
- 
+
+
 def parse_date(entry):
     for key in ("published", "updated"):
         if key in entry:
@@ -91,8 +103,8 @@ def parse_date(entry):
             except (ValueError, TypeError):
                 pass
     return None
- 
- 
+
+
 def fetch_recent(name, url, since):
     items = []
     try:
@@ -100,11 +112,11 @@ def fetch_recent(name, url, since):
     except Exception as e:
         print(f"  [skip] {name}: fetch error ({e})")
         return items
- 
+
     if parsed.bozo and not parsed.entries:
         print(f"  [skip] {name}: could not parse feed")
         return items
- 
+
     for entry in parsed.entries:
         published = parse_date(entry)
         if published is None:
@@ -123,90 +135,77 @@ def fetch_recent(name, url, since):
             }
         )
     return items
- 
- 
-def extract_keywords(text):
-    words = re.findall(r"[a-zA-Z][a-zA-Z\-]{2,}", text.lower())
-    return [w for w in words if w not in STOPWORDS and len(w) > 3]
- 
- 
-def rank_topics(all_items, top_n=3):
-    freq = Counter()
-    sources_by_kw = {}
- 
+
+
+def text_of(item):
+    return f"{item['title']} {item['summary']}".lower()
+
+
+def score_skills(all_items, top_n=3):
+    """Score each curated skill by (# distinct sources mentioning it * 2) +
+    (# distinct articles mentioning it). Only returns skills that actually
+    matched something real — never backfills with junk."""
+    hits = {}  # skill -> {"articles": set(title), "sources": set(source)}
     for item in all_items:
-        text = f"{item['title']} {item['summary']}"
-        kws = set(extract_keywords(text))
-        for kw in kws:
-            freq[kw] += 1
-            sources_by_kw.setdefault(kw, set()).add(item["source"])
- 
+        text = text_of(item)
+        for skill, phrases in SKILL_VOCAB.items():
+            if any(phrase in text for phrase in phrases):
+                bucket = hits.setdefault(skill, {"articles": set(), "sources": set()})
+                bucket["articles"].add(item["title"])
+                bucket["sources"].add(item["source"])
+
     scored = []
-    for kw, count in freq.items():
-        cross_source_bonus = len(sources_by_kw[kw]) * 2
-        scored.append((kw, count + cross_source_bonus))
+    for skill, bucket in hits.items():
+        score = len(bucket["sources"]) * 2 + len(bucket["articles"])
+        scored.append((skill, score, bucket["sources"]))
     scored.sort(key=lambda x: x[1], reverse=True)
- 
-    skill_topics, content_topics = [], []
-    for kw, score in scored:
-        if kw in SKILL_SIGNALS and len(skill_topics) < top_n:
-            skill_topics.append((kw, score, sources_by_kw[kw]))
-        elif kw in CONTENT_SIGNALS and len(content_topics) < top_n:
-            content_topics.append((kw, score, sources_by_kw[kw]))
-        if len(skill_topics) >= top_n and len(content_topics) >= top_n:
-            break
- 
-    fallback = [k for k, _ in scored if k not in SKILL_SIGNALS and k not in CONTENT_SIGNALS]
-    i = 0
-    while len(skill_topics) < top_n and i < len(fallback):
-        kw = fallback[i]
-        skill_topics.append((kw, freq[kw], sources_by_kw[kw]))
-        i += 1
-    while len(content_topics) < top_n and i < len(fallback):
-        kw = fallback[i]
-        content_topics.append((kw, freq[kw], sources_by_kw[kw]))
-        i += 1
- 
-    return skill_topics, content_topics
- 
- 
-CONTENT_ANGLE_TEMPLATES = [
-    "Build a small working demo around '{kw}' and post the before/after — show the prompt or eval you used, not just the take.",
-    "Take one '{kw}' claim from a vendor/newsletter this week and stress-test it yourself — screenshot the result.",
-    "Document your own '{kw}' workflow as a teardown: what you tried, what broke, what you'd ship differently.",
-]
- 
- 
-def build_html(days, sections, skill_topics, content_topics, out_path):
+    return scored[:top_n]
+
+
+def score_articles(all_items, top_n=10):
+    """Relevance = number of distinct skill-vocab terms touched (substance)
+    + a recency tiebreaker. This is what makes the Top 10 'relevant' rather
+    than just 'recent'."""
+    most_recent = max((item["published"] for item in all_items), default=None)
+    scored = []
+    for item in all_items:
+        text = text_of(item)
+        vocab_hits = sum(
+            1 for phrases in SKILL_VOCAB.values() if any(p in text for p in phrases)
+        )
+        recency_bonus = 0.0
+        if most_recent:
+            age_hours = (most_recent - item["published"]).total_seconds() / 3600
+            recency_bonus = max(0.0, 1.0 - (age_hours / (24 * 7)))  # decays over a week
+        relevance = vocab_hits * 2 + recency_bonus
+        scored.append((relevance, item))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [item for _, item in scored[:top_n]]
+
+
+def build_html(since, until, all_sources, skills, top_articles, out_path):
     today = dt.date.today().isoformat()
- 
-    def topic_li(kw, score, sources, template_idx=None):
+    date_range = f"{since.strftime('%b %d, %Y')} – {until.strftime('%b %d, %Y')}"
+    sources_line = ", ".join(sorted(all_sources))
+
+    def skill_li(skill, score, sources):
         src = ", ".join(sorted(sources))
-        extra = ""
-        if template_idx is not None:
-            extra = f"<div class='angle'>{CONTENT_ANGLE_TEMPLATES[template_idx % len(CONTENT_ANGLE_TEMPLATES)].format(kw=kw)}</div>"
-        return f"<li><span class='kw'>{kw}</span><span class='meta'>mentioned across: {src}</span>{extra}</li>"
- 
-    skill_html = "\n".join(topic_li(kw, s, src) for kw, s, src in skill_topics)
-    content_html = "\n".join(
-        topic_li(kw, s, src, i) for i, (kw, s, src) in enumerate(content_topics)
-    )
- 
-    sections_html = ""
-    for category, items in sections.items():
-        if not items:
-            continue
-        cards = ""
-        for item in items:
-            date_str = item["published"].strftime("%b %d")
-            cards += f"""
-            <div class="card">
-              <div class="card-meta">{item['source']} · {date_str}</div>
-              <a class="card-title" href="{item['link']}" target="_blank">{item['title']}</a>
-              <div class="card-summary">{item['summary']}…</div>
-            </div>"""
-        sections_html += f"<h2>{category}</h2><div class='grid'>{cards}</div>"
- 
+        return f"<li><span class='skill-name'>{skill}</span><span class='skill-meta'>seen across: {src}</span></li>"
+
+    skills_html = "\n".join(skill_li(s, sc, src) for s, sc, src in skills)
+    if not skills_html:
+        skills_html = "<li class='empty'>No strong skill signal in this window — try a larger --days value.</li>"
+
+    cards = ""
+    for item in top_articles:
+        date_str = item["published"].strftime("%b %d")
+        cards += f"""
+        <div class="card">
+          <div class="card-meta">{item['source']} · {date_str}</div>
+          <a class="card-title" href="{item['link']}" target="_blank">{item['title']}</a>
+          <div class="card-summary">{item['summary']}…</div>
+        </div>"""
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -217,158 +216,145 @@ def build_html(days, sections, skill_topics, content_topics, out_path):
     --bg: #0d0d0f;
     --panel: #16161a;
     --fg: #f5f3ee;
-    --muted: #9a978f;
+    --muted: #a8a59c;
     --indigo: #5b5bd6;
-    --indigo-soft: #8b8af0;
+    --indigo-soft: #9b9af2;
   }}
   body {{
     background: var(--bg);
     color: var(--fg);
-    font-family: 'DM Sans', -apple-system, sans-serif;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     margin: 0;
-    padding: 40px 24px 80px;
-    max-width: 920px;
+    padding: 44px 28px 80px;
+    max-width: 960px;
     margin-inline: auto;
+    font-size: 17px;
+    line-height: 1.5;
   }}
   h1 {{
     font-family: 'DM Serif Display', Georgia, serif;
-    font-size: 2.1rem;
-    margin-bottom: 0;
+    font-size: 2.4rem;
+    margin-bottom: 4px;
     color: var(--fg);
   }}
-  .subtitle {{
+  .meta-line {{
     color: var(--muted);
-    font-family: 'DM Mono', monospace;
-    font-size: 0.85rem;
-    margin-top: 6px;
+    font-size: 0.95rem;
+    margin-bottom: 4px;
+  }}
+  .sources-line {{
+    color: var(--muted);
+    font-size: 0.88rem;
     margin-bottom: 36px;
   }}
   h2 {{
     font-family: 'DM Serif Display', Georgia, serif;
-    font-size: 1.3rem;
+    font-size: 1.5rem;
     border-bottom: 1px solid #2a2a30;
-    padding-bottom: 8px;
-    margin-top: 44px;
+    padding-bottom: 10px;
+    margin-top: 48px;
   }}
-  .top3-wrap {{
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 20px;
-    margin-bottom: 12px;
-  }}
-  @media (max-width: 640px) {{ .top3-wrap {{ grid-template-columns: 1fr; }} }}
-  .top3-panel {{
+  .skills-panel {{
     background: var(--panel);
     border: 1px solid #26262c;
-    border-radius: 10px;
-    padding: 18px 20px;
+    border-radius: 12px;
+    padding: 24px 28px;
+    margin-bottom: 12px;
   }}
-  .top3-panel h3 {{
-    font-family: 'DM Mono', monospace;
+  .skills-panel h3 {{
+    font-size: 0.85rem;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    font-size: 0.75rem;
     color: var(--indigo-soft);
-    margin: 0 0 12px;
+    margin: 0 0 18px;
+    font-weight: 700;
   }}
-  .top3-panel ol {{ padding-left: 18px; margin: 0; }}
-  .top3-panel li {{ margin-bottom: 16px; }}
-  .kw {{
-    font-weight: 600;
-    text-transform: capitalize;
-    font-size: 1.02rem;
+  .skills-panel ol {{ padding-left: 20px; margin: 0; }}
+  .skills-panel li {{ margin-bottom: 18px; font-size: 1.05rem; }}
+  .skills-panel li.empty {{ list-style: none; padding-left: 0; color: var(--muted); font-size: 0.95rem; }}
+  .skill-name {{
+    font-weight: 700;
+    font-size: 1.15rem;
   }}
-  .meta {{
+  .skill-meta {{
     display: block;
     color: var(--muted);
-    font-size: 0.78rem;
-    font-family: 'DM Mono', monospace;
-    margin-top: 2px;
-  }}
-  .angle {{
-    margin-top: 6px;
-    font-size: 0.88rem;
-    color: var(--fg);
-    background: #1c1c22;
-    border-left: 2px solid var(--indigo);
-    padding: 8px 10px;
-    border-radius: 4px;
+    font-size: 0.82rem;
+    margin-top: 3px;
   }}
   .grid {{
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 14px;
+    gap: 16px;
   }}
   @media (max-width: 640px) {{ .grid {{ grid-template-columns: 1fr; }} }}
   .card {{
     background: var(--panel);
     border: 1px solid #26262c;
-    border-radius: 10px;
-    padding: 14px 16px;
+    border-radius: 12px;
+    padding: 16px 18px;
   }}
   .card-meta {{
-    font-family: 'DM Mono', monospace;
-    font-size: 0.72rem;
+    font-size: 0.78rem;
     color: var(--muted);
-    margin-bottom: 6px;
+    margin-bottom: 8px;
   }}
   .card-title {{
     color: var(--fg);
     text-decoration: none;
-    font-weight: 600;
+    font-weight: 700;
+    font-size: 1.05rem;
     display: block;
-    margin-bottom: 6px;
+    margin-bottom: 8px;
   }}
   .card-title:hover {{ color: var(--indigo-soft); }}
-  .card-summary {{ color: var(--muted); font-size: 0.85rem; line-height: 1.4; }}
+  .card-summary {{ color: var(--muted); font-size: 0.92rem; line-height: 1.5; }}
 </style>
 </head>
 <body>
   <h1>PM Trend Digest</h1>
-  <div class="subtitle">{today} · last {days} day(s) · The Operator PM lens</div>
- 
-  <div class="top3-wrap">
-    <div class="top3-panel">
-      <h3>Top 3 — sharpen this skill</h3>
-      <ol>{skill_html or '<li>No strong signal yet — widen --days.</li>'}</ol>
-    </div>
-    <div class="top3-panel">
-      <h3>Top 3 — post about this (build-in-public)</h3>
-      <ol>{content_html or '<li>No strong signal yet — widen --days.</li>'}</ol>
-    </div>
+  <div class="meta-line">Data window: {date_range}</div>
+  <div class="sources-line">Sources: {sources_line}</div>
+
+  <h2>Top 3 — Skills to Sharpen</h2>
+  <div class="skills-panel">
+    <h3>Based on what's actually showing up across sources</h3>
+    <ol>{skills_html}</ol>
   </div>
- 
-  {sections_html}
+
+  <h2>Top 10 — Most Relevant Articles</h2>
+  <div class="grid">{cards}</div>
 </body>
 </html>"""
- 
+
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html)
- 
- 
+
+
 def build_digest(days, out_path):
     since = dt.datetime.now(tz=tzutc()) - dt.timedelta(days=days)
-    sections = {}
+    until = dt.datetime.now(tz=tzutc())
     all_items = []
- 
+    all_sources = set()
+
     for category, feeds in FEEDS.items():
         print(f"Fetching: {category}")
-        section_items = []
         for name, url in feeds:
             found = fetch_recent(name, url, since)
             print(f"  {name}: {len(found)} new item(s)")
-            section_items.extend(found)
-        section_items.sort(key=lambda x: x["published"], reverse=True)
-        sections[category] = section_items
-        all_items.extend(section_items)
- 
-    skill_topics, content_topics = rank_topics(all_items)
-    build_html(days, sections, skill_topics, content_topics, out_path)
-    print(f"\nDone. {len(all_items)} item(s) across feeds. Digest written to {out_path}")
- 
- 
+            all_items.extend(found)
+            if found:
+                all_sources.add(name)
+
+    skills = score_skills(all_items, top_n=3)
+    top_articles = score_articles(all_items, top_n=10)
+
+    build_html(since, until, all_sources, skills, top_articles, out_path)
+    print(f"\nDone. {len(all_items)} item(s) fetched, top 10 selected. Digest written to {out_path}")
+
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generate a visual PM/AI trend digest.")
+    parser = argparse.ArgumentParser(description="Generate the PM/AI/CS/Support trend digest.")
     parser.add_argument("--days", type=int, default=2, help="How many days back to pull (default: 2)")
     parser.add_argument("--out", type=str, default="pm_trend_digest.html", help="Output HTML file path")
     args = parser.parse_args()
